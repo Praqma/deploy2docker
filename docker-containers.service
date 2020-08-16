@@ -1,0 +1,21 @@
+[Unit]
+Description=Start/stop all Docker containers under /home/containers-runtime
+After=docker.service
+
+[Service]
+Type=simple
+User=feysal
+Group=feysal
+
+# Pull latest changes for all repositories:
+ExecStartPre=/usr/bin/find  /home/containers-runtime/  -name .git -type d  -execdir git pull ';'
+
+ExecStart=/home/containers-runtime/docker-compose-apps.sh start
+
+# Note:
+# ExecStop immediately stops the container, as soon as ExecStart starts the container.
+#   , so it is not needed.
+
+[Install]
+WantedBy=multi-user.target
+
