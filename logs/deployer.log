@@ -1,0 +1,27 @@
+2020-10-19_09:35:01 Finished running the script /home/deploy2docker/deployer.sh
+2020-10-19_09:36:01 Starting the script /home/deploy2docker/deployer.sh
+2020-10-19_09:36:01 Finished running the script /home/deploy2docker/deployer.sh
+2020-10-19_09:37:01 Starting the script /home/deploy2docker/deployer.sh
+2020-10-19_09:37:01 Finished running the script /home/deploy2docker/deployer.sh
+2020-10-19_09:38:01 Starting the script /home/deploy2docker/deployer.sh
+2020-10-19_09:38:01 =====>  Processing deployment task file: /home/deploy2docker/deployer.tasks.d/basicweb.wbitt.com
+2020-10-19_09:38:01 Syntax is OK for GIT repository URL: 'https://gitlab.com/kamranazeem/basicweb.wbitt.com.git'
+2020-10-19_09:38:01 Syntax is OK for GIT repository hash: 'b9c5bb2c'
+2020-10-19_09:38:01 Local directory hash '3b75a70' , and  upstream repo hash 'b9c5bb2c' - are different. Changes need to be applied.
+2020-10-19_09:38:01 Performing 'git pull' inside: /home/containers-runtime/basicweb.wbitt.com ...
+2020-10-19_09:38:03 Stopping docker-compose application - basicweb.wbitt.com ...
+2020-10-19_09:38:04 Removing older containers - basicweb.wbitt.com ...
+2020-10-19_09:38:06 Building fresh image using 'docker-compose build --no-cache --force-rm' ...
+2020-10-19_09:38:06 This may take a while depending on the size/design of the application.
+2020-10-19_09:38:07 Starting docker-compose application - basicweb.wbitt.com ...
+2020-10-19_09:38:07 This may take a while depending on the size/design of the application.
+2020-10-19_09:38:09 Application in the repo 'basicweb.wbitt.com' has been started successfully.
+2020-10-19_09:38:09 Recording 'GIT-PULL-DOCKER-SUCCESS' in: /home/deploy2docker/logs/deployer.done.log ...
+2020-10-19_09:38:09 Removing deployment task file: /home/deploy2docker/deployer.tasks.d/basicweb.wbitt.com ...
+2020-10-19_09:38:09 Finished running the script /home/deploy2docker/deployer.sh
+2020-10-19_09:39:01 Starting the script /home/deploy2docker/deployer.sh
+2020-10-19_09:39:01 Finished running the script /home/deploy2docker/deployer.sh
+2020-10-19_09:40:01 Starting the script /home/deploy2docker/deployer.sh
+2020-10-19_09:40:01 Finished running the script /home/deploy2docker/deployer.sh
+2020-10-19_09:41:01 Starting the script /home/deploy2docker/deployer.sh
+2020-10-19_09:41:01 Finished running the script /home/deploy2docker/deployer.sh
