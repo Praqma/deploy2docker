@@ -110,8 +110,8 @@ for FILE_PATH in ${DOCKER_COMPOSE_DIRECTORIES}; do
     echolog "Removing any existing - but 'stopped' containers ..."
     docker-compose -f ${DOCKER_COMPOSE_FILE_NAME} rm -f
     recordResultInLogFile $? docker-compose rm ${DIR_NAME}
-    echolog "Re-building container images ... (This may take some time) ..."
-    docker-compose -f ${DOCKER_COMPOSE_FILE_NAME} build --no-cache 
+    echolog "(Re-)Building container images using --force-rm ... (This may take some time) ..."
+    docker-compose -f ${DOCKER_COMPOSE_FILE_NAME} build --force-rm 
     recordResultInLogFile $? docker-compose build ${DIR_NAME}
 
     echolog "Bringing up docker-compose application stack ..."
