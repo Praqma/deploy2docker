@@ -64,7 +64,8 @@ Once a `docker-compose` application is deployed, we can use a control script `de
              [ Tasks  directory on docker server ] ---<-----     
 ```
 
-This blog-post is just an excerpt of the detailed guide available here: [https://github.com/Praqma/deploy2docker/blob/master/README.md](https://github.com/Praqma/deploy2docker/blob/master/README.md). Please this link to learn how to setup and use this tool-set.
+## Want to see it in action?
+Sure! This blog-post is just an excerpt from a longer step-by-step guide. To learn more about this tool-set, and see it in action with example deployments, please visit: [https://github.com/Praqma/deploy2docker/blob/master/README.md](https://github.com/Praqma/deploy2docker/blob/master/README.md). 
 
 # Conclusion:
 `deploy2docker` is a set of tools, which makes your life very easy; especially, when - for whatever reason - kubernetes is not an option, you are forced to manage docker-compose applications on docker host, and you don't want to be the meatware-CI (human-CI) for yourself, or your development team. 
