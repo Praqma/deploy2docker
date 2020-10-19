@@ -499,7 +499,7 @@ deploy-image:
     - master
 [kamran@kworkhorse blogdemo.wbitt.com]$ 
 ```
-**Note:** The actual [gitlab-ci.yml.disabled](gitlab-ci.yml.disabled) file - part of this `deploy2docker` repository) - is heavily commented, to help readability and understanding. Above is a simplified version.
+**Note:** The actual [gitlab-ci.yml.example](gitlab-ci.yml.example) file - part of this `deploy2docker` repository) - is heavily commented, to help readability and understanding. Above is a simplified version.
 
 
 
