@@ -151,6 +151,11 @@ function restartDockerCompose() {
   docker-compose -f ${DOCKER_COMPOSE_FILE} rm -f
 
   echo
+  echolog "Building fresh image using 'docker-compose build --force-rm' ..."
+  echolog "This may take a while depending on the size/design of the application."
+  docker-compose -f ${DOCKER_COMPOSE_FILE} build --force-rm
+
+  echo
   echolog "Starting docker-compose application - ${REPO_NAME} ..."
   echolog "This may take a while depending on the size/design of the application."
   docker-compose -f ${DOCKER_COMPOSE_FILE} up -d
@@ -176,6 +181,11 @@ function cloneGitRepoAndStartDockerCompose() {
   # run a sub-shell
   (
   cd ${CONTAINER_RUNTIME_DIRECTORY}/${REPO_NAME}
+  echo
+  echolog "Building fresh image using 'docker-compose build --force-rm' ..."
+  echolog "This may take a while depending on the size/design of the application."
+  docker-compose -f ${DOCKER_COMPOSE_FILE} build --force-rm
+
   echo
   echolog "Starting docker-compose application - ${REPO_NAME} ..."
   echolog "This may take a while depending on the size/design of the application."
