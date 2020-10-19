@@ -15,10 +15,63 @@ These tools were:
 
 I have complete peace of mind since I put these two tools on my docker servers. These tools have been in production for almost two years now, and I think it is safe for others to use them in similar situations.
 
-### My infrastructure setup:
+
+## Use case:
+Suppose you want to deploy a docker-compose application on your docker server. The application could be a simple HTML based website, or a JavaScript application, or wordpress website, etc. You also want to be able to automatically deploy any (future) changes made in your application to be deployed to your docker server, through a CI pipeline. This is the use-case for these tools.
+
+## Assumptions: 
+This tools is opinionated and is designed for specific situations. It assumes the following:
+
+* You are relatively small team/company, with shoe-string budget. i.e. You have one or **few** servers in your **"infrastructure"**.
+* You have not migrated your applications to Kubernetes because you/your team does not have enough Kubernetes skills yet, or you cannot afford (financially) a Kubernetes cluster provided by various cloud providers.
+* You have dockerized apps running on a **single** (and plain) docker host/server. *Not Docker Swarm*
+* In case you have distributed multiple (dockerized) apps over multiple docker hosts/servers, each docker host is an independent docker host. There is no shared container network, nor any other clustering technology in place.
+* You are running these dockerized apps using **docker-compose**.
+* You are the only one managing this/these servers, and the deployment of all dockerized apps; **Or,** you may be a very small team, who are in agreement on how to handle these servers, and how to deploy apps on these servers.
+* You have a **single** git repositories location (git-hub/lab/bucket/your-own/etc) for all the software you are developing. This is true for all the close-source software you / your team may be developing. You will need to create a **Git Token** (with limited read-only access to your repositories) to be used by CI system of your choice, to pull the application code from your private git repositories. You will also use this git token from the docker server to pull the git repository to the docker server. If you are deploying code from open-source repositories, then this does not apply.
+* Connected to previous assumption, you are able to setup/save the same git token as "git credentials" under the home directory of user `deployer`. This means you trust the people in the team, who will have either access to this user, or people with `sudo` access. To be on the safe side, the git token has only **"read-repository"** access/permissions.
+* The **master branch** of all your individual repositories **always contain code that is ready to deploy**. All other code being developed/tested/etc is in other branches.
+* You are willing to keep secrets of various docker-compose apps in a central location on the docker host, such as: `/home/containers-secrets/<repository-name>/<filename>.env`, and you are OK with sharing the secrets with your (small) team, or with some people from that small team.
+* All docker-compose applications will build their own images, so there is no need to pre-build images, or access private container registries.
+* And finally, you have SSH access to the docker server, as `root`.
+
+
+## How does it work?
+Well, first you prepare the docker host with the tools from this repository. i.e. clone this (deploy2docker) repository in `/home/deploy2docker/` directory on your docker host, setup correct ownership and permissions, and setup the required `cron` job.
+
+After that, for each application you want to deploy through CI/CD, you setup it's components in necessary directories on the docker host. For example, for any given docker-compose based application:
+* the run-time code will be stored under: `/home/containers-runtime/<repository-name>/` (this is what is cloned/pulled from the related git repository) 
+* the secrets would be stored as files under `/home/containers-secrets/<repository-name>/<filename>.env`
+* the persistent data is stored under `/home/containers-data/<repository-name>/`
+* the `docker-compose.yml` file of your application uses above locations for storing persistent data and loading secrets.
+
+Then, test deploy the application manually. 
+
+When everything works, you automate it's deployment by adding a `.gitlab-ci.yml` to it's project directory, using code from the  [gitlab-ci.yml.example](gitlab-ci.yml.example) file included in this repository.
+
+Once a `docker-compose` application is deployed, we can use a control script `deployer.sh`, which - in collaboration with `cron` - works as a control loop and watches for incoming tasks. As soon, as CI system connected to a repository sends a special **"task file"** to the docker system, the control script `deployer.sh` picks up this task file, and works on that task. i.e. Apply any changes detected in the related git repository, and restart the related docker-compose application.
+
+### Here is how it works - the work-flow:
+
+```
+                               [Pull changes from related git repo]-->[restart container]
+                                          ^
+[CI server]-->                            |
+              |                      [deployer.sh] ---->-----
+          [internet]                     ^                   |
+               |                         |                [wait 1 minute]
+             [put task-file]     [pick task file]           |
+                |                    ^                 [check tasks directory]
+                V                    |                      |
+             [ Tasks  directory on docker server ] ---<-----     
+```
+
+
+
+## My infrastructure setup:
 For those who are curious, I thought it would be nice to tell a little bit about my setup. 
 
-I have* four servers:
+I have* (had) four servers:
 * DB server, for MySQL + Postgresql
 * Web server, for Wordpress and other websites
 * API server, for applications being written
@@ -27,6 +80,8 @@ I have* four servers:
 Also:
 * Each server is an individual docker host, and runs **"Fedora Linux"**. The Web, API and Dev server each has a local reverse proxy (Traefik), which handles incoming requests for containers only on that server.
 * Each Docker host/server has a bridged docker-network called `services-network`.
+
+Note: By this point in time, only the "dev" server is left as a docker server, and rest of the stuff has been migrated to Kubernetes.
 
 The directory structure on all servers look like this:
 ```
@@ -58,23 +113,6 @@ I will use the server `dev.wbitt.com` to explain the concepts and perform all th
 
 **Note:** By the time of this writing, most of the services of the above mentioned setup are migrated to Kubernetes. Some are still running on one docker host.
 
-## Use case:
-Suppose you want to deploy a docker-compose application (e.g. wordpress website, etc) - to your docker host - and also want to be able to automatically deploy any (future) changes through a CI pipeline. This is the use-case for these tools.
-
-
-## Assumptions: 
-This tools is opinionated and is designed for specific situations. It assumes:
-* You are relatively small team/company, with shoe-string budget. i.e. You have one or **few** servers in your **"infrastructure"**.
-* You have dockerized apps running on a **single** (and plain) docker host/server. *Not Docker Swarm*
-* In case you have distributed multiple (dockerized) apps over multiple docker hosts/servers, each docker host is an independent docker host. There is no shared container network, nor any other clustering technology in place.
-* You are running these dockerized apps using **docker-compose**.
-* You are the only one managing this/these servers, and the deployment of all dockerized apps; **Or,** you may be a very small team, who are in agreement on how to handle these servers, and how to deploy apps on these servers.
-* You have a **single** git repositories location (hub/lab/your-own/etc) for all the software you are developing. This is true for all the close-source software you / your team may be developing. You will need to create a **Git Token** (with limited read-only access to your repositories) to be used by CI system of your choice, to pull the application code from your private git repositories. You will also use this git token from the docker server to pull the git repository to the docker server. If you are deploying code from open-source repositories, then this does not apply.
-* Connected to previous assumption, you are able to setup/save the same git token as "git credentials" under the home directory of user `deployer`. This means you trust the people in the team, who will have either access to this user, or people with `sudo` access. To be on the safe side, the git token has only **"read-repository"** access/permissions.
-* The **master branch** of your repositories **always contain code that is ready to deploy**. All other code being developed/tested/etc is in other branches.
-* You are willing to keep secrets of various docker-compose apps in a central location on the docker host, such as: `/home/containers-secrets/<repository-name>/app.env`, and that you are OK with sharing the secrets with your (small) team, or with some people from that small team.
-* All docker-compose applications will build their own images, so there is no need to pre-build images, or access private container registries.
-* And finally, you have SSH access to the docker server, as `root`.
 
 
 ## Manual steps:
@@ -420,7 +458,12 @@ Once a `docker-compose` application is deployed, we can use a control script `de
 ## Setup `deploy2docker`:
 This is set of scripts (this repository), which need to be placed in some directory on the docker host. In our case, these scripts are placed inside `/home/deploy2docker/` directory.
 
-**To do / TODO: Steps to clone the repo inside /home.** 
+```
+[root@dev ~]# cd /home/
+[root@dev ~]# git clone https://github.com/Praqma/deploy2docker.git
+[root@dev ~]# chown deployer:deployer -R /home/deploy2docker/
+```
+
 
 **Notes:**
 * `/home/deploy2docker` is just a directory under `/home`. It does not mean that there is also a user named `deploy2docker` . This directory (`deploy2docker`) needs to be owned and readable by user `deployer` (and `root`) only.
@@ -526,8 +569,9 @@ There is another log file `/home/deploy2docker/logs/deployer.done.log` recording
 
 
 ## Test `deployer.sh`:
+Right, so we have everything in place. We can do some tests locally (on the dev/docker server itself), to see if `deployer.sh` does it's thing. 
 
-Right, so we have everything in place. I can do some tests locally (on the dev/docker server itself), to see if `deployer.sh` does it's thing.
+Test 1-4 are checking the functionality with fake task file. Test 5 is the actual deployment with a real (example) repository.
 
 ### Test 1:
 On a separate terminal on the dev server, I create a dummy **task file** with the following entry. The script should detect it as invalid, and will not use it. 
@@ -1217,14 +1261,15 @@ df2bcde3fb87        blogdemowbittcom_blogdemo.wbitt.com    "/usr/local/bin/wordâ
 Everything is up! Very good.
 
 **Notes:**
-* The directory `/home/containers-runtime/example-wordpress-website` is failing, because I placed it in as something which should fail. (It's `app.env` file is missing - on purpose). Seeing it fail proves that the script is doing it's thing.
+In the logs, you see:
+* a directory `/home/containers-runtime/example-wordpress-website` is failing, because I placed it in as something which should fail. (It's `app.env` file is missing - on purpose). Seeing it fail proves that the script is doing it's thing.
 * **mysql** is setup to run as docker-compose application , but it's setup does not come from a git repository. That is why you see `ERROR` during `git pull` when the script is processing the  mysql directory. This is ok in my setup. 
-* `privatecoaching.no` is also a docker-compose app, but configured manually. It's code will soon be part of a git repository of it's own. Please ignore it. 
-* This script can remain in the `/home/deploy2docker` directory. 
+* `privatecoaching.no` is actually a wordpressed based docker-compose app, under testing, configured manually. It's code will soon be part of a git repository of it's own. Please ignore it. 
+
 
 
 # Conclusion:
 `deploy2docker` is a set of tools, which makes your life very easy; especially, when - for whatever reason - kubernetes is not an option, you are forced to manage docker-compose applications on docker host, and you don't want to be the meatware-CI (human-CI) for yourself, or your development team. 
 
-I hope you enjoy using these tools as much as I enjoyed developing them, and using them!
+I hope you enjoy using these tools as much as I enjoyed developing them, and using them! I have complete peace of mind since I deployed these two tools on my docker servers. I believe they can be used safely by others in similar situations.
 
