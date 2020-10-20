@@ -1,7 +1,7 @@
 ## Test `deployer.sh`:
-Right, so we have everything in place. We can do some tests locally (on the dev/docker server itself), to see if `deployer.sh` does it's thing. 
+Right, so when we have the deploy2docker tool-set in place, we can do some tests locally (on the dev/docker server itself), to see if `deployer.sh` does it's thing. 
 
-Test 1-4 are checking the functionality with fake task file. Test 5 is the actual deployment with a real (example) repository.
+Test 1-4 are checking the functionality with fake task file. 
 
 ### Test 1:
 On a separate terminal on the dev server, I create a dummy **task file** with the following entry. The script should detect it as invalid, and will not use it. 
