@@ -91,32 +91,6 @@ aws-jumpbox.wbitt.com.  300 IN  A     18.184.77.104
 [deployer@dev blogdemo.wbitt.com]$
 ```
 
-## Directory layout:
-The directory structure on my docker server look like this:
-```
-[deployer@dev ~]$ tree -L 1 /home
-/home
-├── containers-data
-├── containers-runtime
-├── containers-secrets
-├── deploy2docker
-├── deployer
-└── kamran
-```
-
-**Note:** Normally `/home` is the largest partition on Linux systems, so I chose the disk partition mounted as `/home` to host `containers-runtime` , `containers-data`, `containers-secrets` and the `deploy2docker` tool-set being discussed in this guide. These directories need to be owned by the user `deployer`.
-
-```
-[deployer@dev ~]$ ls -lh /home/
-total 8.0K
-drwxr-xr-x 5 deployer deployer   71 Aug  7 23:34 containers-data
-drwxr-xr-x 9 deployer deployer  155 Aug  4 22:24 containers-runtime
-drwxr-x--- 3 deployer deployer   32 Jul 31 19:11 containers-secrets
-drwxr-xr-x 4 deployer deployer  214 Aug  5 00:00 deploy2docker
-drwx------ 4 deployer deployer  188 Aug  5 00:00 deployer
-drwx------ 3 kamran   kamran     74 Oct 20  2019 kamran
-[deployer@dev ~]$ 
-```
 
 I will use the server `dev.wbitt.com` to explain the concepts and perform all the steps in this guide.
 
@@ -148,6 +122,32 @@ Add user, and add it to the `docker` group *only*. **No need to give it sudo/adm
   /home/containers-secrets
 
 [root@dev ~]# chown -R deployer:deployer /home/containers-*
+```
+
+The directory structure looks like this:
+```
+[deployer@dev ~]$ tree -L 1 /home
+/home
+├── containers-data
+├── containers-runtime
+├── containers-secrets
+├── deploy2docker
+├── deployer
+└── kamran
+```
+
+**Note:** Normally `/home` is the largest partition on Linux systems, so I chose the disk partition mounted as `/home` to host `containers-runtime` , `containers-data`, `containers-secrets` and the `deploy2docker` tool-set being discussed in this guide. These directories need to be owned by the user `deployer`.
+
+```
+[deployer@dev ~]$ ls -lh /home/
+total 8.0K
+drwxr-xr-x 5 deployer deployer   71 Aug  7 23:34 containers-data
+drwxr-xr-x 9 deployer deployer  155 Aug  4 22:24 containers-runtime
+drwxr-x--- 3 deployer deployer   32 Jul 31 19:11 containers-secrets
+drwxr-xr-x 4 deployer deployer  214 Aug  5 00:00 deploy2docker
+drwx------ 4 deployer deployer  188 Aug  5 00:00 deployer
+drwx------ 3 kamran   kamran     74 Oct 20  2019 kamran
+[deployer@dev ~]$ 
 ```
 
 ### Create git credentials/token:
@@ -276,11 +276,10 @@ Once the above three are set up, we bring in the fourth component, i.e. the actu
 We have to do the following, which not only mimics Kubernetes, it is also helpful for the `deploy2docker` tool-set I am preparing to show later.
 
 * Create the mysql database for this blog website.
+* Set up a data directory for this application in `/home/containers-data/blogdemo.wbitt.com` (like setting up PV and PVC in kubernetes). (Yes, "I **DO NOT** use docker volumes.")
 * Set up blog's application specific secrets in a central location `/home/containers-secrets/blogdemo.wbitt.com/app.env` (like secrets are created inside a central location - a namespace - in kubernetes)
-* Set up a data directory for this application in `/home/containers-secrets/blogdemo.wbitt.com` (like setting up PV and PVC in kubernetes). (Yes, "I **DO NOT** use docker volumes.")
 * Set up the blog application by cloning the relevant git repository in `/home/containers-runtime/blogdemo.wbitt.com`.
 
-**Note:** Traefik and MySQL DB containers, and host level directory structure are already in-place, and are beyond the scope of this guide.
 
 ### Create MySQL database for blog website:
 ```
