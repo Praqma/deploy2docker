@@ -420,7 +420,7 @@ Okay! It works!
 ### Install wordpress:
 This is application level process, and would always be done manually.
 
-| ![images/wordpress-install.png](images/wordpress-ready.png) |
+| ![images/wordpress-install.png](images/wordpress-install.png) |
 | ----------------------------------------------------------- |
 
 
