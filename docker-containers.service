@@ -4,8 +4,8 @@ After=docker.service
 
 [Service]
 Type=simple
-User=feysal
-Group=feysal
+User=deployer
+Group=deployer
 
 # Pull latest changes for all repositories:
 ExecStartPre=/usr/bin/find  /home/containers-runtime/  -name .git -type d  -execdir git pull ';'
