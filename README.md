@@ -32,14 +32,15 @@ This tools is opinionated and is designed for specific situations. It assumes th
 * Connected to previous assumption, you are able to setup/save the same git token as "git credentials" under the home directory of user `deployer`. This means you trust the people in the team, who will have either access to this user, or people with `sudo` access. To be on the safe side, the git token has only **"read-repository"** access/permissions.
 * The **master branch** of all your individual repositories **always contain code that is ready to deploy**. All other code being developed/tested/etc is in other branches.
 * You are willing to keep secrets of various docker-compose apps in a central location on the docker host, such as: `/home/containers-secrets/<repository-name>/<filename>.env`, and you are OK with sharing the secrets with your (small) team, or with some people from that small team.
-* All docker-compose applications will build their own images, so there is no need to pre-build images, or access private container registries.
+* All docker-compose applications will either use a publicly available image, or build their own images.
 * And finally, you have SSH access to the docker server, as `root`.
 
 
 ## How does it work?
-Well, first you prepare the docker host with the tools from this repository. i.e. clone this (deploy2docker) repository in `/home/deploy2docker/` directory on your docker host, setup correct ownership and permissions, and setup the required `cron` job.
+Well, first you prepare the docker host with the CI/CD automation tools from this repository. i.e. clone this (`deploy2docker`) repository in `/home/deploy2docker/` directory on your docker host, setup correct ownership and permissions, and setup the required `cron` job.
 
 After that, for each application you want to deploy through CI/CD, you setup it's components in necessary directories on the docker host. For example, for any given docker-compose based application:
+
 * the run-time code will be stored under: `/home/containers-runtime/<repository-name>/` (this is what is cloned/pulled from the related git repository) 
 * the secrets would be stored as files under `/home/containers-secrets/<repository-name>/<filename>.env`
 * the persistent data is stored under `/home/containers-data/<repository-name>/`
@@ -49,7 +50,7 @@ Then, test deploy the application manually.
 
 When everything works, you automate it's deployment by adding a `.gitlab-ci.yml` to it's project directory, using code from the  [gitlab-ci.yml.example](gitlab-ci.yml.example) file included in this repository.
 
-Once a `docker-compose` application is deployed, we can use a control script `deployer.sh`, which - in collaboration with `cron` - works as a control loop and watches for incoming tasks. As soon, as CI system connected to a repository sends a special **"task file"** to the docker system, the control script `deployer.sh` picks up this task file, and works on that task. i.e. Apply any changes detected in the related git repository, and restart the related docker-compose application.
+Once a `docker-compose` application is deployed, the control script `deployer.sh`, which - in collaboration with `cron` - works as a control loop and watches for incoming tasks. Every time you make any change in this application's git repository, the CI system detects that change and sends a special **"task file"** to the docker system. The control script `deployer.sh` picks up this task file, and works on that task. i.e. apply any changes detected in the related git repository, and restart the related docker-compose application.
 
 ### Here is how it works - the work-flow:
 
@@ -67,23 +68,31 @@ Once a `docker-compose` application is deployed, we can use a control script `de
 ```
 
 
+Lets set this up!
 
-## My infrastructure setup:
-For those who are curious, I thought it would be nice to tell a little bit about my setup. 
 
-I have* (had) four servers:
-* DB server, for MySQL + Postgresql
-* Web server, for Wordpress and other websites
-* API server, for applications being written
-* Dev server, for trying out ideas
+## The infrastructure setup:
+First, the infrastructure. For this guide, I have a "dev" server `dev.wbitt.com`, for trying out ideas. It runs docker on **"Fedora Linux"**. It has a local reverse proxy (Traefik), which handles incoming requests for containers only on that server. The docker server has a bridged docker-network called `services-network` and all docker applications are connected to it.
 
-Also:
-* Each server is an individual docker host, and runs **"Fedora Linux"**. The Web, API and Dev server each has a local reverse proxy (Traefik), which handles incoming requests for containers only on that server.
-* Each Docker host/server has a bridged docker-network called `services-network`.
 
-Note: By this point in time, only the "dev" server is left as a docker server, and rest of the stuff has been migrated to Kubernetes.
+### DNS setup:
+DNS is setup correctly. I have made sure that from the internet's perspective `blogdemo.wbitt.com` points to this docker server - as Traefik will request a SSL certificate for this blog site as soon as it is started.
 
-The directory structure on all servers look like this:
+```
+[deployer@dev blogdemo.wbitt.com]$ dig blogdemo.wbitt.com
+
+;; QUESTION SECTION:
+;blogdemo.wbitt.com.    IN  A
+
+;; ANSWER SECTION:
+blogdemo.wbitt.com.     300 IN  CNAME aws-jumpbox.wbitt.com.
+aws-jumpbox.wbitt.com.  300 IN  A     18.184.77.104
+
+[deployer@dev blogdemo.wbitt.com]$
+```
+
+## Directory layout:
+The directory structure on my docker server look like this:
 ```
 [deployer@dev ~]$ tree -L 1 /home
 /home
@@ -111,14 +120,13 @@ drwx------ 3 kamran   kamran     74 Oct 20  2019 kamran
 
 I will use the server `dev.wbitt.com` to explain the concepts and perform all the steps in this guide.
 
-**Note:** By the time of this writing, most of the services of the above mentioned setup are migrated to Kubernetes. Some are still running on one docker host.
 
+## Prepare the docker server - one time setup:
 
+The setup of mysql database service and the reverse proxy service are beyond the scope of this guide. I have already setup:
 
-## Manual steps:
-Some steps will be done manually to help understand things. Later, the entire process will be automated. 
-
-
+* Traefik reverse proxy as container (like ingress controller in kubernetes)
+* MySQL DB as container (as you would do in kubernetes, using either CloudSQL, etc; or your own DB container/micro-service)
 
 ### Create a `deployer` user on target docker server:
 This is/will be sort of a system user, so I have created it as `uid:gid` `900:900`, which is below the number `1000`. Numbers `1000` and higher are usually assigned to general system users.
@@ -132,15 +140,47 @@ Add user, and add it to the `docker` group *only*. **No need to give it sudo/adm
 [root@dev ~]# useradd --uid 900 -g deployer -G docker deployer
 ```
 
+### Create the directory tree, and set correct ownership:
 
-### Create SSH key for user `deployer`:
-We need an dedicated SSH key for this `deployer` user, so back on the work computer, I will create a new SSH key-pair.
+```
+[root@dev ~]# mkdir /home/containers-runtime  \
+  /home/containers-data \
+  /home/containers-secrets
+
+[root@dev ~]# chown -R deployer:deployer /home/containers-*
+```
+
+### Create git credentials/token:
+
+Create a (github/gitlab/xyz) GIT-TOKEN to be used by this "deployer" user. This will be used to clone the (private) repositories on the docker server. Save it on your work computer, so you can refer to it later.
+
+```
+[kamran@kworkhorse gitlab]$ pwd
+/home/kamran/Keys-and-Tokens/gitlab
+
+[kamran@kworkhorse gitlab]$ ls -lh
+total 4.0K
+-rw-rw-r-- 1 kamran kamran 21 Jul 29 22:01 GITLAB-CI-TOKEN-used-by-dev.wbitt.com-docker-server.txt
+```
+
+On docker host, setup git credentials-helper for user "deployer". 
+
+```
+[deployer@dev ~]$ git config --global credential.helper store
+```
+**Note:** Because of `credential.helper store`, the first time you clone any repository, you will be asked for git user and password. Use your user and the git token as password, which will then be saved under home directory of user `deployer`.
+
+
+
+### Create SSH key-pair for user `deployer`:
+We need an dedicated SSH key-pair for this `deployer` user, which will be used by the CI system. So back on the work computer, I will create a new SSH key-pair for this purpose only.
 
 ```
 [kamran@kworkhorse witline]$ pwd
 /home/kamran/Keys-and-Tokens/witline
 ```
 
+Note: Compared to RSA, `ed25519` is more efficient algorithm, and results in more compact keys.
 ```
 [kamran@kworkhorse witline]$ ssh-keygen -t ed25519 -f ./deploy-from-ci-to-docker-server_ssh-key
 Generating public/private rsa key pair.
@@ -199,8 +239,10 @@ total 4
 [root@dev ~]#
 ```
 
+We would use the private part of this key to setup a gitlab CI/CD environment variable, later in this guide.
 
-### Test login from work computer:
+
+### Test login from work computer to the docker server:
 ```
 [kamran@kworkhorse ~]$ ssh -i /home/kamran/Keys-and-Tokens/witline/deploy-from-ci-to-docker-server_ssh-key deployer@dev.wbitt.com
 
@@ -211,7 +253,6 @@ Check if you can run docker commands as user `deployer`:
 ```
 [deployer@dev ~]$ docker ps
 CONTAINER ID        IMAGE                                  COMMAND                  CREATED             STATUS              PORTS                                      NAMES
-0933d1e59bda        privatecoachingno_privatecoaching.no   "/usr/local/bin/word…"   56 minutes ago      Up 56 minutes       80/tcp                                     privatecoachingno_privatecoaching.no_1
 f02d338766b5        mysql:5.7                              "docker-entrypoint.s…"   56 minutes ago      Up 56 minutes       3306/tcp, 33060/tcp                        mysql_mysql.local_1
 3cdc6a6b8aaa        traefik:1.7                            "/traefik"               56 minutes ago      Up 56 minutes       0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp   00-traefik-proxy_traefik_1
 [deployer@dev ~]$ 
@@ -220,14 +261,24 @@ f02d338766b5        mysql:5.7                              "docker-entrypoint.s�
 Good.
 
 
-## Deploy the demo blog website - `blogdemo.wbitt.com`:
-Since my idea was to mimic Kubernetes, I have done the following:
+At this point the server has the correct setup. Before we use CI/CD, I want to show you how would you setup a wordpress application manually. Even in CI/CD setup, (including applications being deployed on Kubernetes), you do need to setup some components of your application manually anyway. 
 
-* Set up Traefik reverse proxy as container (like ingress controller in kubernetes)
-* Created MySQL DB as container (as you would do in kubernetes, either CloudSQL, etc, or your own DB container/micro-service)
+These components are:
+
+* Database
+* Persistent storage
+* Secrets
+
+Once the above three are set up, we bring in the fourth component, i.e. the actual code of this wordpress website from the git repository.
+
+
+## Deploy the demo blog website - manually:
+We have to do the following, which not only mimics Kubernetes, it is also helpful for the `deploy2docker` tool-set I am preparing to show later.
+
+* Create the mysql database for this blog website.
 * Set up blog's application specific secrets in a central location `/home/containers-secrets/blogdemo.wbitt.com/app.env` (like secrets are created inside a central location - a namespace - in kubernetes)
-* Set up a data directory for all persistent storage needs of containers (like setting up PV and PVC in kubernetes). (And: Yes, "I **DO NOT** use docker volumes.")
-* Setting up of blog by cloning the relevant git repository.
+* Set up a data directory for this application in `/home/containers-secrets/blogdemo.wbitt.com` (like setting up PV and PVC in kubernetes). (Yes, "I **DO NOT** use docker volumes.")
+* Set up the blog application by cloning the relevant git repository in `/home/containers-runtime/blogdemo.wbitt.com`.
 
 **Note:** Traefik and MySQL DB containers, and host level directory structure are already in-place, and are beyond the scope of this guide.
 
@@ -248,26 +299,42 @@ mysql> flush privileges;
 
 ```
 
-### Create git credentials for the server:
+### Setup persistent-storage directory for this blog site:
+This is similar to creating a PV/PVC in kubernetes. 
 
-Create a (github/gitlab/xyz) GIT-TOKEN to be used by this "deployer" user. This will be used to clone the repositories on the docker server, the first time. Save it on your work computer, so you can refer to it later.
+Create the directory `/home/containers-data/blogdemo.wbitt.com` owned by user `deployer`. In Apache docker container, the user can be set to whatever you want the server process to run as. My docker host user is `deployer`, which has `uid` set to `900`, so I will set ownership of this directory to user `deployer` on the host. This is automatically achieved, if you create this directory as user `deployer`.
 
-```
-[kamran@kworkhorse gitlab]$ pwd
-/home/kamran/Keys-and-Tokens/gitlab
-
-[kamran@kworkhorse gitlab]$ ls -lh
-total 4.0K
--rw-rw-r-- 1 kamran kamran 21 Jul 29 22:01 GITLAB-CI-TOKEN-used-by-dev.wbitt.com-docker-server.txt
-```
-
-On docker host, setup git credentials-helper for user "deployer". 
+My `docker-compose.server.yml` file expects to mount `/home/containers-data/blogdemo.wbitt.com` from the host, so we create that. 
 
 ```
-[deployer@dev ~]$ git config --global credential.helper store
+[deployer@dev ~]$ mkdir -p /home/containers-data/blogdemo.wbitt.com
 ```
-**Note:** Because of `credential.helper store`, the first time you clone any repository, you will be asked for git user and password. Use your user and the git token as password, which will then be saved under home directory of user `deployer`.
 
+### Setup secret for this blog site:
+This is similar to creating a secret in kubernetes. 
+
+Create `blogdemo.wbitt.com` directory under `/home/containers-secrets/blogdemo.wbitt.com`, owned by user `deployer` and ensured that no-one else can go inside this directory.  
+
+```
+[deployer@dev ~]$ mkdir -p /home/containers-secrets/blogdemo.wbitt.com
+
+[deployer@dev ~]$ chmod 750 /home/containers-secrets/blogdemo.wbitt.com
+
+```
+
+Then, create `app.env` - or whatever the "secrets file" for your project is - under the `/home/containers-secrets/blogdemo.wbitt.com/` directory. 
+
+```
+[deployer@dev blogdemo.wbitt.com]$ cat app.env
+WORDPRESS_DB_HOST=mysql.local
+WORDPRESS_DB_NAME=blogdemo_wbitt_com
+WORDPRESS_DB_USER=blogdemo_wbitt_com
+WORDPRESS_DB_PASSWORD=blog-password
+WORDPRESS_TABLE_PREFIX=wp_
+APACHE_RUN_USER=#900
+APACHE_RUN_GROUP=#900
+[deployer@dev blogdemo.wbitt.com]$
+```
 
 ### Clone the blog's git repository:
 
@@ -295,7 +362,6 @@ total 12
 drwxr-xr-x 2 deployer deployer  114 Jul 16 14:11 00-traefik-proxy
 drwxrwxr-x 6 deployer deployer  283 Jul 29 20:05 blogdemo.wbitt.com   <---- This one!
 drwxr-xr-x 3 deployer deployer   77 Jul 29 19:57 mysql
-drwxr-xr-x 4 deployer deployer  214 Jul 16 14:09 privatecoaching.no
 [deployer@dev containers-runtime]$ 
 ```
 
@@ -304,11 +370,11 @@ drwxr-xr-x 4 deployer deployer  214 Jul 16 14:09 privatecoaching.no
 ```
 [deployer@dev containers-runtime]$ cd blogdemo.wbitt.com
 
-[deployer@dev blogdemo.wbitt.com]$ egrep -v "\#|^$" docker-compose.server.yml  
+[deployer@dev blogdemo.wbitt.com]$ cat docker-compose.server.yml  
 version: "3"
 services:
   blogdemo.wbitt.com:
-    build: .
+    image: wordpress:latest
     labels:
       - traefik.enable=true
       - traefik.port=80
@@ -316,7 +382,7 @@ services:
     env_file:
       - /home/containers-secrets/blogdemo.wbitt.com/app.env
     volumes:
-      - /home/containers-data/blogdemo.wbitt.com/uploads:/var/www/html/wp-content/uploads
+      - /home/containers-data/blogdemo.wbitt.com:/var/www/html/wp-content
     networks:
       - services-network
 networks:
@@ -325,83 +391,10 @@ networks:
 [deployer@dev blogdemo.wbitt.com]$
 ```
 
-Since this docker-compose file builds the image at run-time, it would be helpful if I show what the Dockerfile looks like:
-
-```
-[deployer@dev ~]$ cat /home/containers-runtime/blogdemo.wbitt.com/Dockerfile 
-FROM witline/wordpress:5.4.2-php-7.4-apache-2.4
-
-COPY themes /usr/src/themes/
-COPY plugins /usr/src/plugins/ 
-```
-
-Notice, the wordpress image is not the official wordpress image. It is a customized / improved version to fit our needs.
-
-### Setup persistent-storage directory for this blog site:
-This is similar to creating a PV/PVC in kubernetes. 
-
-Create the directory `/home/containers-data/blogdemo.wbitt.com` owned by user `deployer`. In Apache docker container, the user can be set to whatever you want the server process to run as. My docker host user is `deployer`, which has `uid` set to `900`, so I will set ownership of this directory to user `deployer` on the host. This is automatically achieved, if you create this directory as user `deployer`.
-
-My `docker-compose.server.yml` file expects to mount `/home/containers-data/blogdemo.wbitt.com/uploads` from the host, so we create that. 
-
-```
-[deployer@dev ~]$ mkdir -p /home/containers-data/blogdemo.wbitt.com/uploads
-```
-
-### Setup secret for this blog site:
-This is similar to creating a secret in kubernetes. 
-
-Create `blogdemo.wbitt.com` directory under `/home/containers-secrets/blogdemo.wbitt.com`, owned by user `deployer` and ensured that no-one else can go inside this directory.  
-
-```
-[deployer@dev ~]$ mkdir -p /home/containers-secrets/blogdemo.wbitt.com
-
-[deployer@dev ~]$ chmod 750 /home/containers-secrets/blogdemo.wbitt.com
-
-```
-
-Then, create `app.env` - or whatever the "secrets file" for your project is - under the `/home/containers-secrets/blogdemo.wbitt.com/` directory. 
-
-```
-[deployer@dev blogdemo.wbitt.com]$ cat app.env
-WORDPRESS_DB_HOST=mysql.local
-WORDPRESS_DB_NAME=blogdemo_wbitt_com
-WORDPRESS_DB_USER=blogdemo_wbitt_com
-WORDPRESS_DB_PASSWORD=blog-password
-WORDPRESS_TABLE_PREFIX=wp_
-APACHE_RUN_USER=#900
-APACHE_RUN_GROUP=#900
-GIT_USER=kamranazeem
-GIT_TOKEN=MY-SECRET-TOKEN
-[deployer@dev blogdemo.wbitt.com]$
-```
-
-
-### DNS setup:
-Make sure the DNS setup is 100% correct, and that international DNS points to this server; as Traefik will request a SSL certificate for this blog site as soon as it is started.
-
-
-```
-[deployer@dev blogdemo.wbitt.com]$ dig blogdemo.wbitt.com
-
-;; QUESTION SECTION:
-;blogdemo.wbitt.com.    IN  A
-
-;; ANSWER SECTION:
-blogdemo.wbitt.com.     300 IN  CNAME aws-jumpbox.wbitt.com.
-aws-jumpbox.wbitt.com.  300 IN  A     18.184.77.104
-
-[deployer@dev blogdemo.wbitt.com]$
-```
-
 ### Bring up the blog site - manually:
-Since we have setup:
-* persistent data directory for this blog
-* secrets it will use to connect to the related DB, etc
+We are ready to deploy it using `docker-compose` command, and the `docker-compose.server.yml` file. 
 
-; we are ready to deploy it using `docker-compose` command, and the `docker-compose.server.yml` file. 
-
-**Note:** I keep two docker-compose files in the docker-compose apps I work with. One is for the dev PC, and the other is for deploying on the server. I **do not** keep a simple `docker-compose.yml` to avoid accidents. 
+**Note:** I keep two docker-compose yaml files inside the docker-compose apps I work with. One is for the "dev PC", and the other is for deploying on the "server". I **do not** keep a simple `docker-compose.yml` to avoid accidents. 
 
 ```
 [deployer@dev blogdemo.wbitt.com]$ docker-compose -f docker-compose.server.yml up -d
@@ -418,7 +411,6 @@ blogdemowbittcom_blogdemo.wbitt.com_1   /usr/local/bin/wordpress-c ...   Up     
 [deployer@dev blogdemo.wbitt.com]$ docker ps
 CONTAINER ID        IMAGE                                  COMMAND                  CREATED             STATUS              PORTS                                      NAMES
 a599ff22b84e        blogdemowbittcom_blogdemo.wbitt.com    "/usr/local/bin/word…"   37 seconds ago      Up 35 seconds       80/tcp                                     blogdemowbittcom_blogdemo.wbitt.com_1
-0933d1e59bda        privatecoachingno_privatecoaching.no   "/usr/local/bin/word…"   2 hours ago         Up 2 hours          80/tcp                                     privatecoachingno_privatecoaching.no_1
 f02d338766b5        mysql:5.7                              "docker-entrypoint.s…"   2 hours ago         Up 2 hours          3306/tcp, 33060/tcp                        mysql_mysql.local_1
 3cdc6a6b8aaa        traefik:1.7                            "/traefik"               2 hours ago         Up 2 hours          0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp   00-traefik-proxy_traefik_1
 [deployer@dev blogdemo.wbitt.com]$ 
@@ -436,26 +428,12 @@ This is application level process, and would always be done manually.
 | ![images/wordpress-ready.png](images/wordpress-ready.png) |
 | --------------------------------------------------------- |
 
+------
 
-## Time to automate this:
-Once a `docker-compose` application is deployed, we can use a control script `deployer.sh`, which , in collaboration with `cron`, works as a control loop and watches for incoming changes. As soon, as CI system connected to a repository sends a special **"task file"** to the docker system, the control script `deployer.sh` picks up this task file, and works on that task. i.e. Apply any changes and restart the related docker-compose application.
+## deploy2docker:
+Once a `docker-compose` application is deployed, we can use a control script `deployer.sh` - which , in collaboration with `cron` - works as a control loop, and watches for incoming changes. As soon, as CI system connected to a repository sends a special **"task file"** to the docker server, the control script `deployer.sh` (on the server) picks up this task file, and works on that task. i.e. apply any changes, and restart the related docker-compose application.
 
-### Here is how it works / work-flow:
-
-```
-                               [Pull changes from related git repo]-->[restart container]
-                                          ^
-[CI server]-->                            |
-              |                      [deployer.sh] ---->-----
-          [internet]                     ^                   |
-               |                         |                [wait 1 minute]
-             [put task-file]     [pick task file]           |
-                |                    ^                 [check tasks directory]
-                V                    |                      |
-             [ Tasks  directory on docker server ] ---<-----     
-```
-
-## Setup `deploy2docker`:
+### Setup `deploy2docker`:
 This is set of scripts (this repository), which need to be placed in some directory on the docker host. In our case, these scripts are placed inside `/home/deploy2docker/` directory.
 
 ```
@@ -477,10 +455,12 @@ We need a cron job on the docker host, for the user "deployer". It would look li
 */1 * * * * /home/deploy2docker/deployer.sh
 ```
 
-### Configure `deployer.sh` script:
+### Configure `/home/deploy2docker/deployer.sh` script:
 Configure the following variables in the script:
 
 ```
+[deployer@dev ~]$ vi /home/deploy2docker/deployer.sh
+
 # This is the main directory,
 #   where all the run-time definitions of your compose apps reside -
 #   - each in a separate directory:
@@ -495,17 +475,19 @@ DOCKER_COMPOSE_FILE=docker-compose.server.yml
 ```
 
 
+### Setup SSH_KEY as CI/CD environment variable for `blogdemo.wbitt.com` repository:
 
-### Setup CI/CD for `blogdemo.wbitt.com`:
-
-On the work computer, convert the private SSH key into `base64`, and then save it as a variable `SSH_KEY` in the CI variables.
+On the work computer, convert the private SSH key into `base64`, and then save it as a variable `SSH_KEY` as CI variable in the gitlab web interface, under `Settings -> CI/CD -> Variables` .
 
 ```
 [kamran@kworkhorse witline]$ cat deploy-from-ci-to-docker-server_ssh-key | base64 -w 0
 ```
 
 
-Now create a `.gitlab-ci.yml` file which uses this `SSH_KEY` and pushes a *task file* to the docker server. 
+## Setup CI/CD for `blogdemo.wbitt.com`:
+At this point, we setup the final piece of the CI/CD mechanism for this application.
+
+Create a `.gitlab-ci.yml` file which has a deployment stage configured to creates and pushes a *task file* to the docker server. You can use this code as reference for your setup. Make sure to maintain the three variables (values can change), and the `deploy-the-app` section of code. You don't need to change anything in `deploy-the-app` section including the image being used ([kamranazeem/ssh-server](https://gitlab.com/kamranazeem/ssh-server)).
 
 ```
 [kamran@kworkhorse blogdemo.wbitt.com]$ cat .gitlab-ci.yml 
@@ -526,7 +508,7 @@ run-lint:
   only:
     - master
 
-deploy-image:
+deploy-the-app:
   image: kamranazeem/ssh-server
   stage: deploy
   script:
@@ -546,7 +528,7 @@ deploy-image:
 
 
 
-### Monitor the log files:
+### Monitor the log files in separate terminal:
 At the moment, there is no task for `deployer.sh`, so there is no action being recorded in the log file `/home/deploy2docker/logs/deployer.log`.
 
 ```
@@ -564,256 +546,17 @@ There is another log file `/home/deploy2docker/logs/deployer.done.log` recording
 
 ```
 [deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.done.log
-
 ```
 
+------
 
-## Test `deployer.sh`:
-Right, so we have everything in place. We can do some tests locally (on the dev/docker server itself), to see if `deployer.sh` does it's thing. 
-
-Test 1-4 are checking the functionality with fake task file. Test 5 is the actual deployment with a real (example) repository.
-
-### Test 1:
-On a separate terminal on the dev server, I create a dummy **task file** with the following entry. The script should detect it as invalid, and will not use it. 
+## Deploy the wordpress application through CI/CD:
+It is time to push the `.gitlab-ci.yml` file we created a moment ago to the repository, and let "gitlab-ci" deploy this automatically to this docker host. We will just watch the logs.
 
 ```
-[deployer@dev deploy2docker]$ echo "https://gitlab.com/witline/wordpress/blogdemo.wbitt.com 1234567" > deployer.tasks.d/blogdemo.wbitt.com
-```
+[kamran@kworkhorse blogdemo.wbitt.com]$ git add .gitlab-ci.yml
 
-The control loop will detect a task file, and will try to work on it, only to realize that the URL it sees is not really a git repository, and will throw it away.
-
-
-```
-[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.log 
-2020-08-08_21:48:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_21:48:01 Finished running the script /home/deploy2docker/deployer.sh
-
-2020-08-08_22:06:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:06:01 =====>  Processing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com
-2020-08-08_22:06:01 Syntax is NOT OK for GIT repository URL: 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com'
-2020-08-08_22:06:01 The URL 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com' needs to be a git repo - (URL ending in .git)! Exiting ...
-2020-08-08_22:06:01 Recording 'CONFIG-ERROR' in: /home/deploy2docker/logs/deployer.done.log ...
-2020-08-08_22:06:01 Removing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com ...
-2020-08-08_22:06:01 Skipping /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com ...
-2020-08-08_22:06:01 Finished running the script /home/deploy2docker/deployer.sh
-. . . 
-2020-08-08_22:07:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:07:01 Finished running the script /home/deploy2docker/deployer.sh
-. . . 
-```
-
-Check the done file. It should have a new line in it.
-
-```
-[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.done.log
-
-2020-08-08_22:06:01 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com 	 1234567 	 CONFIG-ERROR
-```
-
-So, I have tested it by removing the hash altogether, or entering non-alphanumeric characters in the hash, etc, and the script detects the problem and throws away the task file. I will skip repeating those tests in this guide. 
-
-
-### Test 2:
-Lets test a success case. I will setup a new task file provide the correct git URL, but with some random hash. Note that the actual hash of the upstream git repository could be anything, so for a test, it is ok to just provide any random hash. This should result in `deployer.sh` detecting a difference in hash of local directory and the (supposed) hash of upstream, and should re-deploy the docker-compose application.
-
-Lets create a new task file manually. 
-
-```
-[deployer@dev deploy2docker]$ echo "https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 7654321" > deployer.tasks.d/blogdemo.wbitt.com
-```
-
-Lets check the log files:
-
-```
-[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.log 
-
-2020-08-08_22:13:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:13:01 Finished running the script /home/deploy2docker/deployer.sh
-2020-08-08_22:14:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:14:01 =====>  Processing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com
-2020-08-08_22:14:01 Syntax is OK for GIT repository URL: 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git'
-2020-08-08_22:14:01 Syntax is OK for GIT repository hash: '7654321'
-2020-08-08_22:14:01 Local directory hash '95617ee' , and  upstream repo hash '7654321' - are different. Changes need to be applied.
-2020-08-08_22:14:01 Performing 'git pull' inside: /home/containers-runtime/blogdemo.wbitt.com ...
-2020-08-08_22:14:03 Stopping docker-compose application - blogdemo.wbitt.com ...
-2020-08-08_22:14:06 Removing older containers - blogdemo.wbitt.com ...
-2020-08-08_22:14:07 Starting docker-compose application - blogdemo.wbitt.com ...
-2020-08-08_22:14:07 This may take a while depending on the size/design of the application.
-2020-08-08_22:14:09 Application in the repo 'blogdemo.wbitt.com' has been started successfully.
-2020-08-08_22:14:09 Recording 'GIT-PULL-DOCKER-SUCCESS' in: /home/deploy2docker/logs/deployer.done.log ...
-2020-08-08_22:14:09 Removing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com ...
-2020-08-08_22:14:09 Finished running the script /home/deploy2docker/deployer.sh
-. . . 
-2020-08-08_22:15:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:15:01 Finished running the script /home/deploy2docker/deployer.sh
-```
-
-Check the "done" file:
-
-```
-[deployer@dev deploy2docker]$ tail logs/deployer.done.log 
-2020-08-08_22:06:01 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com 	 1234567 	 CONFIG-ERROR
-
-2020-08-08_22:14:09 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 7654321 	 GIT-PULL-DOCKER-SUCCESS
-```
-Good!
-
-
-Check `docker ps`, which should show that this container has been restarted recently:
-
-```
-[deployer@dev deploy2docker]$ docker ps
-CONTAINER ID        IMAGE                                  COMMAND                  CREATED             STATUS              PORTS                                      NAMES
-c3c316bd23d5        blogdemowbittcom_blogdemo.wbitt.com    "/usr/local/bin/word…"   2 minutes ago       Up 2 minutes        80/tcp                                     blogdemowbittcom_blogdemo.wbitt.com_1
-0933d1e59bda        privatecoachingno_privatecoaching.no   "/usr/local/bin/word…"   10 days ago         Up 10 days          80/tcp                                     privatecoachingno_privatecoaching.no_1
-f02d338766b5        mysql:5.7                              "docker-entrypoint.s…"   10 days ago         Up 10 days          3306/tcp, 33060/tcp                        mysql_mysql.local_1
-3cdc6a6b8aaa        traefik:1.7                            "/traefik"               10 days ago         Up 10 days          0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp   00-traefik-proxy_traefik_1
-[deployer@dev deploy2docker]$ 
-```
-
-
-### Test 3:
-
-Lets see what happens if the hash of upstream and hash of local directory are same.
-
-```
-[deployer@dev deploy2docker]$ echo "https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 95617ee" > deployer.tasks.d/blogdemo.wbitt.com
-```
-
-Check the logs:
-```
-[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.log 
-2020-08-08_22:17:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:17:01 Finished running the script /home/deploy2docker/deployer.sh
-. . . 
-2020-08-08_22:18:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:18:01 =====>  Processing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com
-2020-08-08_22:18:01 Syntax is OK for GIT repository URL: 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git'
-2020-08-08_22:18:01 Syntax is OK for GIT repository hash: '95617ee'
-2020-08-08_22:18:01 Directory hash '95617ee' , and  Upstream Repo hash '95617ee' - are same. Nothing to do.
-2020-08-08_22:18:01 Recording 'NOOP' in: /home/deploy2docker/logs/deployer.done.log ...
-2020-08-08_22:18:01 Removing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com ...
-2020-08-08_22:18:01 Finished running the script /home/deploy2docker/deployer.sh
-. . . 
-```
-
-Check the "done" file:
-
-```
-[deployer@dev deploy2docker]$ tail logs/deployer.done.log 
-2020-08-08_22:06:01 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com 	 1234567 	 CONFIG-ERROR
-2020-08-08_22:14:09 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 7654321 	 GIT-PULL-DOCKER-SUCCESS
-2020-08-08_22:18:01 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 95617ee 	 NOOP
-[deployer@dev deploy2docker]$ 
-```
-
-
-### Test 4:
-I will remove this "blogedemo" docker-compose application directory completely from `/home/containers-runtime/`, while keeping the related "secrets" and the "data" directories in-tact. This should result in `deployer.sh` detecting that the repository does not exist inside `/home/containers-runtime/`, and it should try to pull/clone it and then start it up.
-
-In kubernetes terms, this is equivalent to submitting/applying a "deployment" using `kubectl`.
-
-First, we stop it and remove it's run-time directory:
-
-```
-[deployer@dev deploy2docker]$ cd /home/containers-runtime/blogdemo.wbitt.com/
-
-[deployer@dev blogdemo.wbitt.com]$ docker-compose -f docker-compose.server.yml stop
-Stopping blogdemowbittcom_blogdemo.wbitt.com_1 ... done
-
-[deployer@dev blogdemo.wbitt.com]$ docker-compose -f docker-compose.server.yml rm -f
-Going to remove blogdemowbittcom_blogdemo.wbitt.com_1
-Removing blogdemowbittcom_blogdemo.wbitt.com_1 ... done
-
-[deployer@dev blogdemo.wbitt.com]$ cd ..
-
-[deployer@dev containers-runtime]$ rm -fr /home/containers-runtime/blogdemo.wbitt.com 
-[deployer@dev containers-runtime]$ 
-```
-Note: I have not deleted secrets and the persistent data directories for it. In kubernetes terms, I have only deleted the deployment, and **not** deleted related secret and PV/PVC.
-
-
-Check `docker ps`:
-```
-[deployer@dev containers-runtime]$ docker ps
-CONTAINER ID        IMAGE                                  COMMAND                  CREATED             STATUS              PORTS                                      NAMES
-0933d1e59bda        privatecoachingno_privatecoaching.no   "/usr/local/bin/word…"   10 days ago         Up 10 days          80/tcp                                     privatecoachingno_privatecoaching.no_1
-f02d338766b5        mysql:5.7                              "docker-entrypoint.s…"   10 days ago         Up 10 days          3306/tcp, 33060/tcp                        mysql_mysql.local_1
-3cdc6a6b8aaa        traefik:1.7                            "/traefik"               10 days ago         Up 10 days          0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp   00-traefik-proxy_traefik_1
-[deployer@dev containers-runtime]$ 
-```
-
-OK. So the blogdemo container/compose-application is not there anymore. Good!
-
-
-Lets create a task file, and see if `deployer.sh` can detect that it is absent, and can clone it and start it.
-
-
-```
-[deployer@dev deploy2docker]$ echo "https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 95617ee" > deployer.tasks.d/blogdemo.wbitt.com
-```
-
-Check the logs:
-
-```
-[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.log 
-2020-08-08_22:31:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:31:01 Finished running the script /home/deploy2docker/deployer.sh
-. . . 
-2020-08-08_22:32:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:32:01 =====>  Processing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com
-2020-08-08_22:32:01 Syntax is OK for GIT repository URL: 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git'
-2020-08-08_22:32:01 Syntax is OK for GIT repository hash: '95617ee'
-2020-08-08_22:32:01 Local directory '/home/containers-runtime/blogdemo.wbitt.com' does not exist - OR - is not a 'git' directory.
-2020-08-08_22:32:01 Attempting to clone the repo 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git' into '/home/containers-runtime/blogdemo.wbitt.com' ...
-2020-08-08_22:32:01 Creating directory /home/containers-runtime/blogdemo.wbitt.com ...
-2020-08-08_22:32:01 Cloning repo https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git into /home/containers-runtime/blogdemo.wbitt.com ...
-2020-08-08_22:32:03 Starting docker-compose application - blogdemo.wbitt.com ...
-2020-08-08_22:32:03 This may take a while depending on the size/design of the application.
-2020-08-08_22:32:06 Application in the repo 'blogdemo.wbitt.com' has been started successfully.
-2020-08-08_22:32:06 Recording 'GIT-CLONE-DOCKER-SUCCESS' in: /home/deploy2docker/logs/deployer.done.log ...
-2020-08-08_22:32:06 Removing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com ...
-2020-08-08_22:32:06 Finished running the script /home/deploy2docker/deployer.sh
-. . . 
-2020-08-08_22:33:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:33:01 Finished running the script /home/deploy2docker/deployer.sh
-```
-
-Check the "done" file:
-```
-[deployer@dev deploy2docker]$ tail logs/deployer.done.log 
-2020-08-08_22:06:01 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com 	 1234567 	 CONFIG-ERROR
-2020-08-08_22:14:09 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 7654321 	 GIT-PULL-DOCKER-SUCCESS
-2020-08-08_22:18:01 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 95617ee 	 NOOP
-2020-08-08_22:32:06 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 95617ee 	 GIT-CLONE-DOCKER-SUCCESS
-[deployer@dev deploy2docker]$ 
-
-```
-
-Check `docker ps`, this blogdemo application should be up:
-```
-[deployer@dev deploy2docker]$ docker ps
-CONTAINER ID        IMAGE                                  COMMAND                  CREATED              STATUS              PORTS                                      NAMES
-b8155f4c579b        blogdemowbittcom_blogdemo.wbitt.com    "/usr/local/bin/word…"   About a minute ago   Up About a minute   80/tcp                                     blogdemowbittcom_blogdemo.wbitt.com_1
-0933d1e59bda        privatecoachingno_privatecoaching.no   "/usr/local/bin/word…"   10 days ago          Up 10 days          80/tcp                                     privatecoachingno_privatecoaching.no_1
-f02d338766b5        mysql:5.7                              "docker-entrypoint.s…"   10 days ago          Up 10 days          3306/tcp, 33060/tcp                        mysql_mysql.local_1
-3cdc6a6b8aaa        traefik:1.7                            "/traefik"               10 days ago          Up 10 days          0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp   00-traefik-proxy_traefik_1
-[deployer@dev deploy2docker]$ 
-
-```
-
-It works!
-
-
-### Test 5 - the last test:
-In this test, I will not create any task file myself. Instead, I will make changes to this repository on my local computer, push the changes to "gitlab", and let "gitlab-ci" deploy this automatically to this docker host. I will just watch the logs.
-
-```
-[kamran@kworkhorse blogdemo.wbitt.com]$ echo '# Just a comment in app.env.example' >> app.env.example 
-
-[kamran@kworkhorse blogdemo.wbitt.com]$ git add app.env.example
-
-[kamran@kworkhorse blogdemo.wbitt.com]$ git commit -m "added a comment in app.env.example"
+[kamran@kworkhorse blogdemo.wbitt.com]$ git commit -m "added a .gitlab-ci.yml file"
 
 [kamran@kworkhorse blogdemo.wbitt.com]$ git push 
 ```
@@ -825,32 +568,34 @@ Check the logs:
 2020-08-08_22:41:01 Finished running the script /home/deploy2docker/deployer.sh
 2020-08-08_22:42:01 Starting script /home/deploy2docker/deployer.sh
 . . . 
-2020-08-08_22:42:01 =====>  Processing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com
-2020-08-08_22:42:01 Syntax is OK for GIT repository URL: 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git'
-2020-08-08_22:42:01 Syntax is OK for GIT repository hash: '8b9a8e7f'
-2020-08-08_22:42:01 Local directory hash '95617ee' , and  upstream repo hash '8b9a8e7f' - are different. Changes need to be applied.
-2020-08-08_22:42:01 Performing 'git pull' inside: /home/containers-runtime/blogdemo.wbitt.com ...
-2020-08-08_22:42:04 Stopping docker-compose application - blogdemo.wbitt.com ...
-2020-08-08_22:42:08 Removing older containers - blogdemo.wbitt.com ...
-2020-08-08_22:42:08 Starting docker-compose application - blogdemo.wbitt.com ...
-2020-08-08_22:42:08 This may take a while depending on the size/design of the application.
-2020-08-08_22:42:11 Application in the repo 'blogdemo.wbitt.com' has been started successfully.
-2020-08-08_22:42:11 Recording 'SUCCESS' in: /home/deploy2docker/logs/deployer.done.log ...
-2020-08-08_22:42:11 Removing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com ...
-2020-08-08_22:42:11 Finished running the script /home/deploy2docker/deployer.sh
+2020-10-20_20:25:01 =====>  Processing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com
+2020-10-20_20:25:01 Syntax is OK for GIT repository URL: 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git'
+2020-10-20_20:25:01 Syntax is OK for GIT repository hash: '03390abe'
+2020-10-20_20:25:01 Local directory '/home/containers-runtime/blogdemo.wbitt.com' does not exist - OR - is not a 'git' directory.
+2020-10-20_20:25:01 Attempting to clone the repo 'https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git' into '/home/containers-runtime/blogdemo.wbitt.com' ...
+2020-10-20_20:25:01 Creating directory /home/containers-runtime/blogdemo.wbitt.com ...
+2020-10-20_20:25:01 Cloning repo https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git into /home/containers-runtime/blogdemo.wbitt.com ...
+2020-10-20_20:25:03 Building fresh image using 'docker-compose build --force-rm' ...
+2020-10-20_20:25:03 This may take a while depending on the size/design of the application.
+2020-10-20_20:25:04 Starting docker-compose application - blogdemo.wbitt.com ...
+2020-10-20_20:25:04 This may take a while depending on the size/design of the application.
+2020-10-20_20:25:32 Application in the repo 'blogdemo.wbitt.com' has been started successfully.
+2020-10-20_20:25:32 Recording 'GIT-CLONE-DOCKER-SUCCESS' in: /home/deploy2docker/logs/deployer.done.log ...
+2020-10-20_20:25:32 Removing deployment task file: /home/deploy2docker/deployer.tasks.d/blogdemo.wbitt.com ...
+2020-10-20_20:25:32 Finished running the script /home/deploy2docker/deployer.sh
 . . . 
-2020-08-08_22:43:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_22:43:01 Finished running the script /home/deploy2docker/deployer.sh
+2020-10-20_20:26:01 Starting the script /home/deploy2docker/deployer.sh
+2020-10-20_20:26:01 Finished running the script /home/deploy2docker/deployer.sh
 ```
 
 Check the "done" file:
 ```
 [deployer@dev deploy2docker]$ tail logs/deployer.done.log 
-2020-08-08_22:06:01 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com 	 1234567 	 CONFIG-ERROR
-2020-08-08_22:14:09 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 7654321 	 SUCCESS
-2020-08-08_22:18:01 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 95617ee 	 NOOP
-2020-08-08_22:32:06 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 95617ee 	 GIT-CLONE-DOCKER-SUCCESS
-2020-08-08_22:42:11 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 8b9a8e7f 	 SUCCESS
+2020-10-19_10:13:06 	 https://gitlab.com/kamranazeem/basicweb.wbitt.com.git 	 b4551529 	 GIT-CLONE-DOCKER-SUCCESS
+2020-10-20_18:47:19 	 https://gitlab.com/kamranazeem/basicweb.wbitt.com.git 	 e2faa17d 	 GIT-PULL-DOCKER-SUCCESS
+2020-10-20_18:48:09 	 https://gitlab.com/kamranazeem/basicweb.wbitt.com.git 	 3d2a4ccd 	 GIT-PULL-DOCKER-SUCCESS
+2020-10-20_20:01:08 	 https://gitlab.com/kamranazeem/basicweb.wbitt.com.git 	 83dcda7f 	 GIT-PULL-DOCKER-SUCCESS
+2020-10-20_20:25:32 	 https://gitlab.com/witline/wordpress/blogdemo.wbitt.com.git 	 03390abe 	 GIT-CLONE-DOCKER-SUCCESS
 [deployer@dev deploy2docker]$ 
 ```
 
@@ -968,11 +713,6 @@ ERROR: Couldn't find env file: /home/containers-runtime/example-wordpress-websit
 -------------------------------------------------------------------------------
 mysql_mysql.local_1   docker-entrypoint.sh mysqld   Up      3306/tcp, 33060/tcp
 
-2020-08-09_00:43:42 Showing status of docker-compose application stack inside /home/containers-runtime/privatecoaching.no ...
-                 Name                               Command               State   Ports 
-----------------------------------------------------------------------------------------
-privatecoachingno_privatecoaching.no_1   /usr/local/bin/wordpress-c ...   Up      80/tcp
-
 2020-08-09_00:43:43 Finished running the script ./docker-compose-apps.sh .
 
 [deployer@dev deploy2docker]$ 
@@ -991,8 +731,7 @@ The logs from the above *starter* script go into the file `/home/deploy2docker/l
 2020-08-09_01:18:36 'docker-compose status' is 'ERROR' on '/home/containers-runtime/example-wordpress-website'.
 2020-08-09_01:18:36 Showing status of docker-compose application stack inside /home/containers-runtime/mysql ...
 2020-08-09_01:18:37 'docker-compose status' is 'SUCCESS' on '/home/containers-runtime/mysql'.
-2020-08-09_01:18:37 Showing status of docker-compose application stack inside /home/containers-runtime/privatecoaching.no ...
-2020-08-09_01:18:38 'docker-compose status' is 'SUCCESS' on '/home/containers-runtime/privatecoaching.no'.
+
 2020-08-09_01:18:38 Finished running the script /home/deploy2docker/docker-compose-apps.sh .
 ```
 
@@ -1003,7 +742,6 @@ Lets stop all docker-compose applications on this server:
 [deployer@dev ~]$ /home/deploy2docker/docker-compose-apps.sh stop
 2020-08-09_01:19:19 Starting the script /home/deploy2docker/docker-compose-apps.sh for the 'stop' operation ...
 
-
 2020-08-09_01:19:19 Stopping docker-compose application stack inside /home/containers-runtime/00-traefik-proxy ...
 Stopping 00-traefik-proxy_traefik_1 ... done
 2020-08-09_01:19:20 'docker-compose stop' is 'SUCCESS' on '/home/containers-runtime/00-traefik-proxy'.
@@ -1011,7 +749,6 @@ Stopping 00-traefik-proxy_traefik_1 ... done
 Going to remove 00-traefik-proxy_traefik_1
 Removing 00-traefik-proxy_traefik_1 ... done
 2020-08-09_01:19:21 'docker-compose rm' is 'SUCCESS' on '/home/containers-runtime/00-traefik-proxy'.
-
 
 2020-08-09_01:19:21 Stopping docker-compose application stack inside /home/containers-runtime/blogdemo.wbitt.com ...
 Stopping blogdemowbittcom_blogdemo.wbitt.com_1 ... done
@@ -1021,14 +758,12 @@ Going to remove blogdemowbittcom_blogdemo.wbitt.com_1
 Removing blogdemowbittcom_blogdemo.wbitt.com_1 ... done
 2020-08-09_01:19:24 'docker-compose rm' is 'SUCCESS' on '/home/containers-runtime/blogdemo.wbitt.com'.
 
-
 2020-08-09_01:19:24 Stopping docker-compose application stack inside /home/containers-runtime/example-wordpress-website ...
 ERROR: Couldn't find env file: /home/containers-runtime/example-wordpress-website/app.env
 2020-08-09_01:19:24 'docker-compose stop' is 'ERROR' on '/home/containers-runtime/example-wordpress-website'.
 2020-08-09_01:19:24 Removing 'stopped' containers ...
 ERROR: Couldn't find env file: /home/containers-runtime/example-wordpress-website/app.env
 2020-08-09_01:19:25 'docker-compose rm' is 'ERROR' on '/home/containers-runtime/example-wordpress-website'.
-
 
 2020-08-09_01:19:25 Stopping docker-compose application stack inside /home/containers-runtime/mysql ...
 Stopping mysql_mysql.local_1 ... done
@@ -1037,15 +772,6 @@ Stopping mysql_mysql.local_1 ... done
 Going to remove mysql_mysql.local_1
 Removing mysql_mysql.local_1 ... done
 2020-08-09_01:19:29 'docker-compose rm' is 'SUCCESS' on '/home/containers-runtime/mysql'.
-
-
-2020-08-09_01:19:29 Stopping docker-compose application stack inside /home/containers-runtime/privatecoaching.no ...
-Stopping privatecoachingno_privatecoaching.no_1 ... done
-2020-08-09_01:19:31 'docker-compose stop' is 'SUCCESS' on '/home/containers-runtime/privatecoaching.no'.
-2020-08-09_01:19:31 Removing 'stopped' containers ...
-Going to remove privatecoachingno_privatecoaching.no_1
-Removing privatecoachingno_privatecoaching.no_1 ... done
-2020-08-09_01:19:32 'docker-compose rm' is 'SUCCESS' on '/home/containers-runtime/privatecoaching.no'.
 
 2020-08-09_01:19:32 Finished running the script /home/deploy2docker/docker-compose-apps.sh .
 
@@ -1074,10 +800,7 @@ The log file shows the following information:
 2020-08-09_01:19:28 'docker-compose stop' is 'SUCCESS' on '/home/containers-runtime/mysql'.
 2020-08-09_01:19:28 Removing 'stopped' containers ...
 2020-08-09_01:19:29 'docker-compose rm' is 'SUCCESS' on '/home/containers-runtime/mysql'.
-2020-08-09_01:19:29 Stopping docker-compose application stack inside /home/containers-runtime/privatecoaching.no ...
-2020-08-09_01:19:31 'docker-compose stop' is 'SUCCESS' on '/home/containers-runtime/privatecoaching.no'.
-2020-08-09_01:19:31 Removing 'stopped' containers ...
-2020-08-09_01:19:32 'docker-compose rm' is 'SUCCESS' on '/home/containers-runtime/privatecoaching.no'.
+
 2020-08-09_01:19:32 Finished running the script /home/deploy2docker/docker-compose-apps.sh .
 . . . 
 ```
@@ -1097,8 +820,6 @@ Lets start all docker-compose applications on this docker host:
 [deployer@dev ~]$ /home/deploy2docker/docker-compose-apps.sh start
 2020-08-09_01:23:39 Starting the script /home/deploy2docker/docker-compose-apps.sh for the 'start' operation ...
 
-
-
 2020-08-09_01:23:39 Pulling latest changes from git repository linked to /home/containers-runtime/00-traefik-proxy ...
 
 fatal: not a git repository (or any of the parent directories): .git
@@ -1112,8 +833,6 @@ traefik uses an image, skipping
 2020-08-09_01:23:40 Bringing up docker-compose application stack ...
 Creating 00-traefik-proxy_traefik_1 ... done
 2020-08-09_01:23:42 'docker-compose up' is 'SUCCESS' on '/home/containers-runtime/00-traefik-proxy'.
-
-
 
 2020-08-09_01:23:42 Pulling latest changes from git repository linked to /home/containers-runtime/blogdemo.wbitt.com ...
 
@@ -1137,8 +856,6 @@ Successfully tagged blogdemowbittcom_blogdemo.wbitt.com:latest
 Creating blogdemowbittcom_blogdemo.wbitt.com_1 ... done
 2020-08-09_01:23:47 'docker-compose up' is 'SUCCESS' on '/home/containers-runtime/blogdemo.wbitt.com'.
 
-
-
 2020-08-09_01:23:47 Pulling latest changes from git repository linked to /home/containers-runtime/example-wordpress-website ...
 
 Already up to date.
@@ -1153,8 +870,6 @@ ERROR: Couldn't find env file: /home/containers-runtime/example-wordpress-websit
 ERROR: Couldn't find env file: /home/containers-runtime/example-wordpress-website/app.env
 2020-08-09_01:23:50 'docker-compose up' is 'ERROR' on '/home/containers-runtime/example-wordpress-website'.
 
-
-
 2020-08-09_01:23:50 Pulling latest changes from git repository linked to /home/containers-runtime/mysql ...
 
 fatal: not a git repository (or any of the parent directories): .git
@@ -1168,30 +883,6 @@ mysql.local uses an image, skipping
 2020-08-09_01:23:51 Bringing up docker-compose application stack ...
 Creating mysql_mysql.local_1 ... done
 2020-08-09_01:23:53 'docker-compose up' is 'SUCCESS' on '/home/containers-runtime/mysql'.
-
-
-
-2020-08-09_01:23:53 Pulling latest changes from git repository linked to /home/containers-runtime/privatecoaching.no ...
-
-fatal: not a git repository (or any of the parent directories): .git
-2020-08-09_01:23:53 'git pull' is 'ERROR' on '/home/containers-runtime/privatecoaching.no'.
-2020-08-09_01:23:53 Removing any existing - but 'stopped' containers ...
-No stopped containers
-2020-08-09_01:23:54 'docker-compose rm' is 'SUCCESS' on '/home/containers-runtime/privatecoaching.no'.
-2020-08-09_01:23:54 Re-building container images ... (This may take some time) ...
-Building privatecoaching.no
-Step 1/3 : FROM witline/wordpress:5.4.2-php-7.4-apache-2.4
- ---> 399887d2b75a
-Step 2/3 : COPY themes /usr/src/themes/
- ---> 2c7e23fb83f2
-Step 3/3 : COPY plugins /usr/src/plugins/
- ---> 0a2e3b097bc9
-Successfully built 0a2e3b097bc9
-Successfully tagged privatecoachingno_privatecoaching.no:latest
-2020-08-09_01:23:56 'docker-compose build' is 'SUCCESS' on '/home/containers-runtime/privatecoaching.no'.
-2020-08-09_01:23:56 Bringing up docker-compose application stack ...
-Creating privatecoachingno_privatecoaching.no_1 ... done
-2020-08-09_01:23:59 'docker-compose up' is 'SUCCESS' on '/home/containers-runtime/privatecoaching.no'.
 
 2020-08-09_01:23:59 Finished running the script /home/deploy2docker/docker-compose-apps.sh .
 
@@ -1264,7 +955,6 @@ Everything is up! Very good.
 In the logs, you see:
 * a directory `/home/containers-runtime/example-wordpress-website` is failing, because I placed it in as something which should fail. (It's `app.env` file is missing - on purpose). Seeing it fail proves that the script is doing it's thing.
 * **mysql** is setup to run as docker-compose application , but it's setup does not come from a git repository. That is why you see `ERROR` during `git pull` when the script is processing the  mysql directory. This is ok in my setup. 
-* `privatecoaching.no` is actually a wordpressed based docker-compose app, under testing, configured manually. It's code will soon be part of a git repository of it's own. Please ignore it. 
 
 
 
