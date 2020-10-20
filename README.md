@@ -309,8 +309,8 @@ My `docker-compose.server.yml` file expects to mount `/home/containers-data/blog
 [deployer@dev ~]$ mkdir -p /home/containers-data/blogdemo.wbitt.com
 ```
 
-### Setup secret for this blog site:
-This is similar to creating a secret in kubernetes. 
+### Setup secrets for this blog site:
+This is similar to creating secrets in kubernetes. 
 
 Create `blogdemo.wbitt.com` directory under `/home/containers-secrets/blogdemo.wbitt.com`, owned by user `deployer` and ensured that no-one else can go inside this directory.  
 
@@ -321,7 +321,7 @@ Create `blogdemo.wbitt.com` directory under `/home/containers-secrets/blogdemo.w
 
 ```
 
-Then, create `app.env` - or whatever the "secrets file" for your project is - under the `/home/containers-secrets/blogdemo.wbitt.com/` directory. 
+Then, create `app.env` - or whatever the "secrets file(s)" for your project is - under the `/home/containers-secrets/blogdemo.wbitt.com/` directory. 
 
 ```
 [deployer@dev blogdemo.wbitt.com]$ cat app.env
