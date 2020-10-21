@@ -1,13 +1,13 @@
 # deploy2docker - A toolset to deploy docker-compose apps to a plain docker-compose server
 
-This mainly a CI helper / orchestrator for docker. The idea is to mimic kubernetes in terms of major components when you are not using Kubernetes for any reason. This tool tries to bring the **"running state"** of your docker-server to your **"desired-state"** , specified in your `docker-compose.yml` file - all using a CI pipeline - thus a **"deployer"**. 
+This is mainly a CI helper / orchestrator for docker. The idea is to mimic kubernetes in terms of major components when you are not using Kubernetes for any reason. This tool tries to bring the **"running state"** of your docker-server to your **"desired-state"** , specified in your `docker-compose.yml` file - all using a CI pipeline - thus a **"deployer"**. 
 
 ## Why?/Inspiration:
 I understand that Kubernetes is on the rise. It is the most favored platform for deploying containerized applications for last five years, and everyone is either migrating, or eager to migrate their infrastructure to Kubernetes. So where does docker-compose fit? Well, Kubernetes may be extremely popular, but entry point to Kubernetes is a bit hard. Also, for anyone trying to dockerize an application, or just trying a container image to see how it works, and how few containers (micro-services) would work together to solve a particular problem, **docker-compose** is the easiest tool to use. Also, many people have dockerized their applications, but they are not ready for Kubernetes yet. Some of them may have just one small server, which they use as docker host and manually run their applications - as docker-compose apps - on that server. For those people, ability to bring up all the docker-compose apps at the system boot time, and ability to use git+CI pipelines to deploy their code automatically on their docker host(s) is a huge benefit.
 
 I was in this situation about two years ago, and it inspired me to develop this tool-set. (For those who are wondering, I **did not** want to use terraform, ansible or any configuration management system to do this. Those tools make this a very complex problem. So, **no.**) 
 
-In late 2018, I helped a friend of mine to dockerize his applications. These applications (before dockerization) used to be deployed on Linux VMs using traditional system administration methods and tools. Some of these applications were wordpress based websites, and some were code which his team wrote in different programming languages. I helped him deploy the new dockerized applications on individual docker servers. That is when I developed some tools to help automate many aspects of the deployment. 
+In late 2018, I helped a friend of mine to dockerize his applications. These applications (before dockerization) used to be deployed on Linux VMs using traditional system administration methods and tools. Some of these applications were wordpress based websites, and some were code which his team wrote in different programming languages. I helped him deploy the new dockerized applications on individual docker servers. That was when I developed some tools to help automate many aspects of the deployment. 
 
 These tools were:
 * Automatic start-up of all compose applications at system boot time, *by pulling latest changes from respective git repositories*. - **docker-compose-apps.sh**
@@ -35,12 +35,12 @@ This tools is opinionated and is designed for specific situations. It assumes th
 
 
 ## How does it work?
-Well, first you prepare the docker host with the tools from this repository. i.e. clone this (deploy2docker) repository in `/home/deploy2docker/` directory on your docker host, setup correct ownership and permissions, and setup the required `cron` job.
+Well, first you prepare the docker host with the tools from this repository. i.e. clone this (`deploy2docker`) repository in `/home/deploy2docker/` directory on your docker host, setup correct ownership and permissions, and setup the required `cron` job.
 
 After that, for each application you want to deploy through CI/CD, you setup it's components in necessary directories on the docker host. For example, for any given docker-compose based application:
 * the run-time code will be stored under: `/home/containers-runtime/<repository-name>/` (this is what is cloned/pulled from the related git repository) 
-* the secrets would be stored as files under `/home/containers-secrets/<repository-name>/<filename>.env`
 * the persistent data is stored under `/home/containers-data/<repository-name>/`
+* the secrets would be stored as files under `/home/containers-secrets/<repository-name>/<filename>.env`
 * the `docker-compose.yml` file of your application uses above locations for storing persistent data and loading secrets.
 
 Then, test-deploy the application manually. 
