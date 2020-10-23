@@ -479,6 +479,27 @@ On the work computer, convert the private SSH key into `base64`, and then save i
 [kamran@kworkhorse witline]$ cat deploy-from-ci-to-docker-server_ssh-key | base64 -w 0
 ```
 
+### Monitor the log files in separate terminal:
+At the moment, there is no task for `deployer.sh`, so there is no action being recorded in the log file `/home/deploy2docker/logs/deployer.log`.
+
+```
+[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.log 
+2020-08-08_21:46:01 Starting script /home/deploy2docker/deployer.sh
+2020-08-08_21:46:01 Finished running the script /home/deploy2docker/deployer.sh
+2020-08-08_21:47:01 Starting script /home/deploy2docker/deployer.sh
+2020-08-08_21:47:01 Finished running the script /home/deploy2docker/deployer.sh
+2020-08-08_21:48:01 Starting script /home/deploy2docker/deployer.sh
+2020-08-08_21:48:01 Finished running the script /home/deploy2docker/deployer.sh
+. . . 
+```
+
+There is another log file `/home/deploy2docker/logs/deployer.done.log` recording just the "done" status. At the moment, there is nothing in it.
+
+```
+[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.done.log
+```
+
+
 
 ## Setup CI/CD for `blogdemo.wbitt.com`:
 At this point, we setup the final piece of the CI/CD mechanism for this application.
@@ -523,26 +544,6 @@ deploy-the-app:
 **Note:** The actual [gitlab-ci.yml.example](gitlab-ci.yml.example) file - part of this `deploy2docker` repository) - is heavily commented, to help readability and understanding. Above is a simplified version.
 
 
-
-### Monitor the log files in separate terminal:
-At the moment, there is no task for `deployer.sh`, so there is no action being recorded in the log file `/home/deploy2docker/logs/deployer.log`.
-
-```
-[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.log 
-2020-08-08_21:46:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_21:46:01 Finished running the script /home/deploy2docker/deployer.sh
-2020-08-08_21:47:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_21:47:01 Finished running the script /home/deploy2docker/deployer.sh
-2020-08-08_21:48:01 Starting script /home/deploy2docker/deployer.sh
-2020-08-08_21:48:01 Finished running the script /home/deploy2docker/deployer.sh
-. . . 
-```
-
-There is another log file `/home/deploy2docker/logs/deployer.done.log` recording just the "done" status. At the moment, there is nothing in it.
-
-```
-[deployer@dev ~]$ tail -f  /home/deploy2docker/logs/deployer.done.log
-```
 
 ------
 
